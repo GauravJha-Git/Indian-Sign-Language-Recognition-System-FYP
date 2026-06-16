@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual Environment
+.venv/
+venv/
+env/
+
+# Environment Variables
+.env
+.env.*
+
+# Audio files generated at runtime
+static/audio/
+
+# React / Vite
+frontend/node_modules/
+frontend/dist/
+
+# Logs
+*.log
+
+# VS Code
+.vscode/settings.json
+
+# OS Files
+.DS_Store
+Thumbs.db
+
+# Dataset Videos
+videos/
+
+# Temporary files
+temp/
+tmp/
+*.tmp
