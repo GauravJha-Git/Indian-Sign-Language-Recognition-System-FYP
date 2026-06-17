@@ -1,6 +1,6 @@
 import React, { useCallback } from 'react';
 import { motion } from 'framer-motion';
-import { UploadCloud, FileVideo, X } from 'lucide-react';
+import { Upload, Video, X } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { Button } from './ui/button';
 
@@ -43,25 +43,53 @@ export function UploadZone({ onFileSelect, selectedFile, onClear }: UploadZonePr
     }
   };
 
-  if (selectedFile) {
+  const [videoUrl, setVideoUrl] = React.useState<string | null>(null);
+  const [duration, setDuration] = React.useState<number>(0);
+
+  React.useEffect(() => {
+    if (selectedFile) {
+      const url = URL.createObjectURL(selectedFile);
+      setVideoUrl(url);
+      return () => URL.revokeObjectURL(url);
+    } else {
+      setVideoUrl(null);
+    }
+  }, [selectedFile]);
+
+  if (selectedFile && videoUrl) {
     return (
       <motion.div 
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
-        className="relative p-6 mt-4 border-2 border-border rounded-2xl bg-secondary flex items-center justify-between"
+        className="relative mt-2 border border-border rounded-xl bg-surface overflow-hidden shadow-sm"
       >
-        <div className="flex items-center space-x-4">
-          <div className="p-3 bg-card rounded-xl">
-            <FileVideo className="w-8 h-8 text-primaryAccent" />
-          </div>
-          <div>
-            <p className="font-medium text-textPrimary truncate max-w-[200px] sm:max-w-xs">{selectedFile.name}</p>
-            <p className="text-sm text-textSecondary">{(selectedFile.size / (1024 * 1024)).toFixed(2)} MB</p>
-          </div>
+        <div className="w-full h-48 bg-background flex items-center justify-center relative group">
+          <video 
+            src={videoUrl} 
+            controls 
+            onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
+            className="w-full h-full object-contain"
+            controlsList="nodownload"
+          />
         </div>
-        <Button variant="ghost" size="icon" onClick={onClear} className="text-textSecondary hover:text-error">
-          <X className="w-5 h-5" />
-        </Button>
+        <div className="p-3 flex items-center justify-between border-t border-border">
+          <div className="flex items-center space-x-3 overflow-hidden">
+            <div className="p-2 bg-surface border border-border rounded-lg shrink-0">
+              <Video className="w-4 h-4 text-textSecondary" />
+            </div>
+            <div className="overflow-hidden">
+              <p className="font-medium text-textPrimary truncate text-[13px]">{selectedFile.name}</p>
+              <div className="flex items-center space-x-2 text-[11px] font-medium text-textSecondary/70 mt-0.5">
+                <span>{(selectedFile.size / (1024 * 1024)).toFixed(2)} MB</span>
+                <span>•</span>
+                <span>{duration > 0 ? `${Math.round(duration)} sec` : '...'}</span>
+              </div>
+            </div>
+          </div>
+          <Button variant="ghost" size="icon" onClick={onClear} className="w-8 h-8 text-textSecondary hover:text-textPrimary shrink-0 transition-colors">
+            <X className="w-4 h-4" />
+          </Button>
+        </div>
       </motion.div>
     );
   }
@@ -71,8 +99,8 @@ export function UploadZone({ onFileSelect, selectedFile, onClear }: UploadZonePr
       whileHover={{ scale: 1.01 }}
       whileTap={{ scale: 0.99 }}
       className={cn(
-        "relative flex flex-col items-center justify-center w-full h-64 mt-4 border-2 border-dashed rounded-2xl cursor-pointer transition-colors duration-200 ease-in-out",
-        isDragActive ? "border-primary bg-primary/5" : "border-border bg-secondary hover:bg-secondary/80 hover:border-border/80"
+        "relative flex flex-col items-center justify-center w-full h-56 mt-2 border border-dashed rounded-xl cursor-pointer transition-colors duration-200 ease-in-out bg-surface",
+        isDragActive ? "border-primary bg-primary/5" : "border-border hover:border-textSecondary/50"
       )}
       onDragEnter={handleDrag}
       onDragLeave={handleDrag}
@@ -86,13 +114,13 @@ export function UploadZone({ onFileSelect, selectedFile, onClear }: UploadZonePr
         onChange={handleChange}
       />
       <div className="flex flex-col items-center justify-center pt-5 pb-6">
-        <div className="p-4 mb-4 rounded-full bg-card shadow-sm border border-border">
-          <UploadCloud className="w-8 h-8 text-primary" />
+        <div className="p-3 mb-4 rounded-lg bg-background border border-border">
+          <Upload className="w-5 h-5 text-textSecondary" />
         </div>
-        <p className="mb-2 text-sm text-textSecondary">
-          <span className="font-semibold text-textPrimary">Click to upload</span> or drag and drop
+        <p className="mb-1 text-[13px] font-medium text-textPrimary">
+          Click to upload <span className="text-textSecondary font-normal">or drag and drop</span>
         </p>
-        <p className="text-xs text-textSecondary/70">MP4, AVI, MOV (Max. 50MB)</p>
+        <p className="text-[11px] font-medium text-textSecondary/70 uppercase tracking-wider">MP4, AVI, MOV (Max. 50MB)</p>
       </div>
     </motion.div>
   );

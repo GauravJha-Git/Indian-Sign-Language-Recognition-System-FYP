@@ -11,36 +11,50 @@ from src.data_preprocessing import extract_frames, SEQUENCE_LENGTH
 from src.feature_extraction import extract_video_keypoints
 from src.predict import text_to_speech
 from deep_translator import GoogleTranslator
+from src.services.sentence_refiner import refine_sentence
+from src.services.translation_cache import TranslationCache
 
 app = FastAPI(title="Sign Language Recognition API")
 
-LANGUAGES = {
-    "English": "en",
-    "Hindi": "hi",
-    "Bengali": "bn",
-    "Tamil": "ta",
-    "Telugu": "te",
-    "Marathi": "mr",
-    "Gujarati": "gu",
-    "Kannada": "kn",
-    "Malayalam": "ml",
-    "Punjabi": "pa",
-    "Urdu": "ur",
-    "Odia": "or",
-    "Assamese": "as",
-    "French": "fr",
-    "German": "de",
-    "Spanish": "es",
-    "Italian": "it",
-    "Portuguese": "pt",
-    "Dutch": "nl",
-    "Russian": "ru",
-    "Turkish": "tr",
-    "Arabic": "ar",
-    "Chinese": "zh-CN",
-    "Japanese": "ja",
-    "Korean": "ko"
+# Initialize Cache
+translation_cache = TranslationCache()
+
+SUPPORTED_LANGUAGES = {
+    "Indian Languages": {
+        "English": "en",
+        "Hindi": "hi",
+        "Bengali": "bn",
+        "Tamil": "ta",
+        "Telugu": "te",
+        "Marathi": "mr",
+        "Gujarati": "gu",
+        "Kannada": "kn",
+        "Malayalam": "ml",
+        "Urdu": "ur"
+    },
+    "International Languages": {
+        "French": "fr",
+        "German": "de",
+        "Spanish": "es",
+        "Italian": "it",
+        "Portuguese": "pt",
+        "Dutch": "nl",
+        "Russian": "ru",
+        "Turkish": "tr",
+        "Arabic": "ar",
+        "Chinese": "zh-CN",
+        "Japanese": "ja",
+        "Korean": "ko"
+    }
 }
+
+LANGUAGES = {}
+for category, langs in SUPPORTED_LANGUAGES.items():
+    LANGUAGES.update(langs)
+
+@app.get("/languages")
+async def get_languages():
+    return SUPPORTED_LANGUAGES
 
 # Setup CORS
 app.add_middleware(
@@ -113,16 +127,28 @@ async def predict_video(video: UploadFile = File(...), language: str = Form("Eng
         predicted_label = str(CLASSES[predicted_idx])
         confidence = float(probs[predicted_idx])
 
+        # Refine Sentence
+        refined_prediction = refine_sentence(predicted_label)
+
         # Translation
         lang_code = LANGUAGES.get(language, "en")
-        translated_text = predicted_label
+        translated_text = refined_prediction
+        translation_source = "cache"
+
         if lang_code != "en":
-            try:
-                translated_text = GoogleTranslator(source='en', target=lang_code).translate(predicted_label)
-            except Exception as e:
-                print(f"Translation failed: {e}")
-                translated_text = predicted_label
-                lang_code = "en"
+            cached_trans = translation_cache.get(refined_prediction, lang_code)
+            if cached_trans:
+                translated_text = cached_trans
+                translation_source = "cache"
+            else:
+                translation_source = "translator"
+                try:
+                    translated_text = GoogleTranslator(source='en', target=lang_code).translate(refined_prediction)
+                    translation_cache.set(refined_prediction, lang_code, translated_text)
+                except Exception as e:
+                    print(f"Translation failed: {e}")
+                    translated_text = refined_prediction
+                    lang_code = "en"
 
         # Text to Speech
         audio_filename = f"output_{uuid.uuid4().hex}.mp3"
@@ -137,12 +163,53 @@ async def predict_video(video: UploadFile = File(...), language: str = Form("Eng
 
         return {
             "original_prediction": predicted_label,
+            "refined_prediction": refined_prediction,
             "translated_text": translated_text,
             "selected_language": language,
             "language_code": lang_code,
+            "translation_source": translation_source,
             "confidence": confidence,
             "audio_url": f"/static/audio/{audio_filename}"
         }
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/translate")
+async def translate_text_endpoint(text: str = Form(...), language: str = Form("English")):
+    try:
+        lang_code = LANGUAGES.get(language, "en")
+        translated_text = text
+        translation_source = "cache"
+
+        if lang_code != "en":
+            cached_trans = translation_cache.get(text, lang_code)
+            if cached_trans:
+                translated_text = cached_trans
+                translation_source = "cache"
+            else:
+                translation_source = "translator"
+                try:
+                    translated_text = GoogleTranslator(source='en', target=lang_code).translate(text)
+                    translation_cache.set(text, lang_code, translated_text)
+                except Exception as e:
+                    print(f"Translation failed: {e}")
+                    translated_text = text
+                    lang_code = "en"
+
+        # Text to Speech
+        audio_filename = f"output_{uuid.uuid4().hex}.mp3"
+        audio_path = os.path.join(AUDIO_DIR, audio_filename)
+        text_to_speech(translated_text, audio_path, lang=lang_code)
+
+        return {
+            "original_text": text,
+            "translated_text": translated_text,
+            "selected_language": language,
+            "language_code": lang_code,
+            "translation_source": translation_source,
+            "audio_url": f"/static/audio/{audio_filename}"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+

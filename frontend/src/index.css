@@ -1,11 +1,47 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
+  :root {
+    --bg-background: #F5F5F5;
+    --bg-surface: #FFFFFF;
+    --bg-card: #FFFFFF;
+    --color-border: #E5E5E5;
+    
+    --text-primary: #171717;
+    --text-secondary: #525252;
+    
+    --primary-accent: #8B5CF6;
+    --primary-hover: #A78BFA;
+    --primary-active: #7C3AED;
+    
+    --color-success: #22C55E;
+    --color-warning: #F59E0B;
+    --color-error: #EF4444;
+  }
+
+  .dark {
+    --bg-background: #0A0A0A;
+    --bg-surface: #111111;
+    --bg-card: #171717;
+    --color-border: #262626;
+    
+    --text-primary: #FAFAFA;
+    --text-secondary: #A1A1AA;
+    
+    --primary-accent: #8B5CF6;
+    --primary-hover: #A78BFA;
+    --primary-active: #7C3AED;
+    
+    --color-success: #22C55E;
+    --color-warning: #F59E0B;
+    --color-error: #EF4444;
+  }
+
   body {
-    @apply bg-background text-textPrimary font-sans antialiased m-0 p-0;
+    @apply bg-background text-textPrimary font-sans antialiased m-0 p-0 transition-colors duration-200;
   }
 }
