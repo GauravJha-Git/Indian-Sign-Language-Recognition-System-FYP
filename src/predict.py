@@ -94,7 +94,7 @@ def text_to_speech(text: str, output_path: str = "output_audio.mp3", lang: str =
 
     tts = gTTS(text=text, lang=lang, slow=False)
     tts.save(output_path)
-    print(f"[INFO] Audio saved → {output_path}")
+    print(f"[INFO] Audio saved -> {output_path}")
     return output_path
 
 

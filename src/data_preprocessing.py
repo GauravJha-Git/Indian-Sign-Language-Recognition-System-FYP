@@ -109,7 +109,7 @@ def load_dataset(video_dir: str = VIDEO_DIR, num_frames: int = SEQUENCE_LENGTH):
             f for f in os.listdir(class_path)
             if f.lower().endswith(('.mp4', '.avi', '.mov'))
         ]
-        print(f"  → {class_name}: {len(video_files)} videos")
+        print(f"  -> {class_name}: {len(video_files)} videos")
 
         for vf in video_files:
             video_path = os.path.join(class_path, vf)
