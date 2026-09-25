@@ -6,7 +6,7 @@ LSTM-based model for sign language sequence classification.
 
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import (
-    LSTM, Dense, Dropout, BatchNormalization, Input
+    Conv1D, LSTM, Dense, Dropout, BatchNormalization, Input
 )
 
 
@@ -18,11 +18,12 @@ def build_model(
     dropout_rate: float = 0.4
 ) -> Sequential:
     """
-    Build a stacked-LSTM classifier.
+    Build a Conv1D + stacked-LSTM classifier.
 
     Architecture
     ------------
-    Input → LSTM(128) → BatchNorm → Dropout →
+    Input → Conv1D(64, kernel_size=3, same, relu) → BatchNorm → Dropout →
+            LSTM(128) → BatchNorm → Dropout →
             LSTM(64)  → BatchNorm → Dropout →
             Dense(64, relu) → Dropout →
             Dense(num_classes, softmax)
@@ -42,6 +43,11 @@ def build_model(
     model = Sequential([
         # Input layer
         Input(shape=(sequence_length, feature_dim)),
+
+        # Temporal feature extraction while preserving 30 timesteps
+        Conv1D(64, kernel_size=3, padding='same', activation='relu'),
+        BatchNormalization(),
+        Dropout(0.3),
 
         # First LSTM layer – return sequences for stacking
         LSTM(lstm_units[0], return_sequences=True),

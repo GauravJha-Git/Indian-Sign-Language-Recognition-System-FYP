@@ -1,5 +1,7 @@
 import os
 import tempfile
+import threading
+import time
 import uuid
 from fastapi import FastAPI, UploadFile, File, HTTPException, Form
 from fastapi.middleware.cors import CORSMiddleware
@@ -11,6 +13,7 @@ from src.data_preprocessing import extract_frames, SEQUENCE_LENGTH
 from src.feature_extraction import extract_video_keypoints
 from src.predict import text_to_speech
 from deep_translator import GoogleTranslator
+from deep_translator.exceptions import TooManyRequests
 from src.services.sentence_refiner import refine_sentence
 from src.services.translation_cache import TranslationCache
 
@@ -18,6 +21,9 @@ app = FastAPI(title="Sign Language Recognition API")
 
 # Initialize Cache
 translation_cache = TranslationCache()
+GOOGLE_TRANSLATION_LOCK = threading.Lock()
+GOOGLE_TRANSLATION_INTERVAL_SECONDS = 1.0
+_last_google_translation_at = 0.0
 
 SUPPORTED_LANGUAGES = {
     "Indian Languages": {
@@ -51,6 +57,25 @@ SUPPORTED_LANGUAGES = {
 LANGUAGES = {}
 for category, langs in SUPPORTED_LANGUAGES.items():
     LANGUAGES.update(langs)
+
+
+def translate_with_google(text: str, target_language: str) -> str:
+    """Serialize cache-miss requests so rapid language switching is not rate-limited."""
+    global _last_google_translation_at
+
+    with GOOGLE_TRANSLATION_LOCK:
+        elapsed = time.monotonic() - _last_google_translation_at
+        if elapsed < GOOGLE_TRANSLATION_INTERVAL_SECONDS:
+            time.sleep(GOOGLE_TRANSLATION_INTERVAL_SECONDS - elapsed)
+
+        for attempt in range(5):
+            _last_google_translation_at = time.monotonic()
+            try:
+                return GoogleTranslator(source='en', target=target_language).translate(text)
+            except TooManyRequests:
+                if attempt == 2:
+                    raise
+                time.sleep(2 ** attempt)
 
 @app.get("/languages")
 async def get_languages():
@@ -143,7 +168,7 @@ async def predict_video(video: UploadFile = File(...), language: str = Form("Eng
             else:
                 translation_source = "translator"
                 try:
-                    translated_text = GoogleTranslator(source='en', target=lang_code).translate(refined_prediction)
+                    translated_text = translate_with_google(refined_prediction, lang_code)
                     translation_cache.set(refined_prediction, lang_code, translated_text)
                 except Exception as e:
                     print(f"Translation failed: {e}")
@@ -190,12 +215,13 @@ async def translate_text_endpoint(text: str = Form(...), language: str = Form("E
             else:
                 translation_source = "translator"
                 try:
-                    translated_text = GoogleTranslator(source='en', target=lang_code).translate(text)
+                    translated_text = translate_with_google(text, lang_code)
                     translation_cache.set(text, lang_code, translated_text)
-                except Exception as e:
-                    print(f"Translation failed: {e}")
-                    translated_text = text
-                    lang_code = "en"
+                except TooManyRequests as exc:
+                    raise HTTPException(
+                        status_code=503,
+                        detail="Google Translate is rate-limited. Please try again shortly.",
+                    ) from exc
 
         # Text to Speech
         audio_filename = f"output_{uuid.uuid4().hex}.mp3"
@@ -210,6 +236,8 @@ async def translate_text_endpoint(text: str = Form(...), language: str = Form("E
             "translation_source": translation_source,
             "audio_url": f"/static/audio/{audio_filename}"
         }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
