@@ -6,24 +6,31 @@ LSTM-based model for sign language sequence classification.
 
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import (
-    Conv1D, LSTM, Dense, Dropout, BatchNormalization, Input
+    Input,
+    Conv1D,
+    BatchNormalization,
+    MaxPooling1D,
+    Bidirectional,
+    LSTM,
+    Dense,
+    Dropout,
+    ReLU
 )
+from tensorflow.keras.optimizers import Adam
 
 
 def build_model(
     sequence_length: int = 30,
-    feature_dim: int = 258,
+    feature_dim: int = 1280,
     num_classes: int = 6,
-    lstm_units: tuple = (128, 64),
-    dropout_rate: float = 0.4
+    dropout_rate: float = 0.5
 ) -> Sequential:
     """
-    Build a Conv1D + stacked-LSTM classifier.
+    Build a stacked-LSTM classifier.
 
     Architecture
     ------------
-    Input → Conv1D(64, kernel_size=3, same, relu) → BatchNorm → Dropout →
-            LSTM(128) → BatchNorm → Dropout →
+    Input → LSTM(128) → BatchNorm → Dropout →
             LSTM(64)  → BatchNorm → Dropout →
             Dense(64, relu) → Dropout →
             Dense(num_classes, softmax)
@@ -44,28 +51,69 @@ def build_model(
         # Input layer
         Input(shape=(sequence_length, feature_dim)),
 
-        # Temporal feature extraction while preserving 30 timesteps
-        Conv1D(64, kernel_size=3, padding='same', activation='relu'),
+        # ======================================================
+        # 1D CNN
+        # ======================================================
+        # CHANGED:
+        # 1D CNN works over the temporal sequence of frames.
+        Conv1D(
+            filters=64,    #changed: reduce LSTM units to reduce overfitting
+            kernel_size=3,
+            padding="same"
+        ),
+
         BatchNormalization(),
-        Dropout(0.3),
 
-        # First LSTM layer – return sequences for stacking
-        LSTM(lstm_units[0], return_sequences=True),
-        BatchNormalization(),
-        Dropout(dropout_rate),
+        ReLU(),
 
-        # Second LSTM layer
-        LSTM(lstm_units[1], return_sequences=False),
-        BatchNormalization(),
-        Dropout(dropout_rate),
+        # Reduce temporal size
+        MaxPooling1D(
+            pool_size=2
+        ),
 
-        # Dense classifier head
-        Dense(64, activation='relu'),
-        Dropout(dropout_rate * 0.75),   # slightly less dropout here
+        Dropout(0.20),
 
-        # Output layer
-        Dense(num_classes, activation='softmax')
+        # ======================================================
+        # Bi-LSTM
+        # ======================================================
+        # CHANGED:
+        # Using ONE Bi-LSTM instead of two stacked Bi-LSTMs
+        # to reduce overfitting for the small dataset.
+        Bidirectional(
+            LSTM(
+                128,     #changed: reduce LSTM units to reduce overfitting
+                return_sequences=False
+            )
+        ),
+
+        Dropout(0.20),
+
+        # ======================================================
+        # Classifier
+        # ======================================================
+        Dense(
+            64,      #changed: reduce LSTM units to reduce overfitting
+            activation="relu"
+        ),
+
+        Dropout(0.20),
+
+        # ======================================================
+        # Output
+        # ======================================================
+        Dense(
+            num_classes,
+            activation="softmax"
+        )
     ])
+
+    # ==========================================================
+    # CHANGED:
+    # Lower learning rate to make training more stable.
+    # ==========================================================
+    optimizer = Adam(
+        learning_rate=1e-3          #changed: reduce learning rate to make training more stable
+    )
 
     model.compile(
         optimizer='adam',
@@ -81,5 +129,5 @@ def build_model(
 # Quick sanity check
 # ──────────────────────────────────────────────
 if __name__ == "__main__":
-    m = build_model()
-    print(f"\nTotal params: {m.count_params():,}")
+    model = build_model()           #changes m to model to m to avoid confusion with the model module
+    print(f"\nTotal params: {model.count_params():,}")

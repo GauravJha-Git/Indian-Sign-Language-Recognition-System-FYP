@@ -15,15 +15,22 @@ from tensorflow.keras.models import load_model
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from src.data_preprocessing import extract_frames, SEQUENCE_LENGTH
-from src.feature_extraction import extract_video_keypoints, FEATURE_DIM
 
+# CHANGED: Use MobileNetV2 feature extraction
+from src.feature_extraction import (
+    extract_video_features
+)
 # ──────────────────────────────────────────────
 # Paths
 # ──────────────────────────────────────────────
 PROJECT_ROOT = os.path.dirname(os.path.dirname(__file__))
+
 MODELS_DIR = os.path.join(PROJECT_ROOT, "models")
+
 MODEL_PATH = os.path.join(MODELS_DIR, "sign_language_model.h5")
+
 ENCODER_PATH = os.path.join(MODELS_DIR, "label_encoder.npy")
+
 NORM_PATH = os.path.join(MODELS_DIR, "norm_stats.npz")
 
 
@@ -60,17 +67,29 @@ def predict_video(video_path: str, model=None, classes=None,
 
     # Step 1: Extract frames
     frames = extract_frames(video_path, SEQUENCE_LENGTH)
+
     if frames is None:
         return None, 0.0, {}
 
-    # Step 2: Extract keypoints
-    keypoints = extract_video_keypoints(frames)
+    # ──────────────────────────────────────────────
+    # CHANGED:
+    # Old code:
+    # extract_video_keypoints()
+    #
+    # New code:
+    # MobileNetV2 feature extraction
+    # ──────────────────────────────────────────────
+    features = (
+        features - norm_mean
+    ) / (
+        norm_std + 1e-8
+    )
 
-    # Step 3: Normalize using training stats
-    keypoints = (keypoints - norm_mean) / (norm_std + 1e-8)
-
-    # Step 4: Predict
-    X = keypoints[np.newaxis, ...]   # shape: (1, 30, 258)
+    # Shape:
+    # (1, 30, 1280)
+    X = features[np.newaxis, ...]  
+    
+    # Predict
     probs = model.predict(X, verbose=0)[0]
 
     predicted_idx = np.argmax(probs)
@@ -100,7 +119,7 @@ def text_to_speech(text: str, output_path: str = "output_audio.mp3", lang: str =
 
 # ──────────────────────────────────────────────
 # CLI interface
-# ──────────────────────────────────────────────
+# no chnages in this section if it nesscary than chnage it ──────────────────────────────────────────────
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Predict sign language from video")
     parser.add_argument("--video", type=str, required=True,

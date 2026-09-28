@@ -1,188 +1,211 @@
 """
 feature_extraction.py
 ---------------------
-Extract hand + pose keypoints from video frames using MediaPipe Holistic.
-Includes data augmentation to expand the small dataset.
+MobileNetV2 frame feature extraction.
+
+NEW PIPELINE:
+Video Frames → MobileNetV2 → 1280 features/frame
+             → 30 × 1280 sequence
+             → 1D CNN → Bi-LSTM
 """
 
 import numpy as np
-import mediapipe as mp
+import tensorflow as tf
+
+from tensorflow.keras.applications import MobileNetV2
+from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
 
 # ──────────────────────────────────────────────
-# MediaPipe setup
+# CHANGED: MobileNetV2 configuration
 # ──────────────────────────────────────────────
-mp_holistic = mp.solutions.holistic
+IMAGE_SIZE = (224, 224)
+MOBILENET_FEATURE_DIM = 1280
 
-# Keypoint dimensions:
-#   Pose:       33 landmarks × 4 values (x, y, z, visibility) = 132
-#   Left hand:  21 landmarks × 3 values (x, y, z) = 63
-#   Right hand: 21 landmarks × 3 values (x, y, z) = 63
-#   Total per frame = 258
-NUM_POSE = 33 * 4      # 132
-NUM_HAND = 21 * 3      # 63    (each hand)
-FEATURE_DIM = NUM_POSE + 2 * NUM_HAND   # 258
+# CHANGED: Load pretrained MobileNetV2.
+# include_top=False + pooling="avg" gives 1280 features per frame.
+mobilenet = MobileNetV2(
+    weights="imagenet",
+    include_top=False,
+    pooling="avg",
+    input_shape=(224, 224, 3)
+)
+
+# CHANGED: Freeze MobileNetV2 because the dataset is very small.
+mobilenet.trainable = False
 
 
-def extract_keypoints(frame: np.ndarray, holistic) -> np.ndarray:
+def extract_video_features(frames: np.ndarray) -> np.ndarray:
     """
-    Extract pose + hand keypoints from a single RGB frame.
+    Convert one video into a sequence of MobileNetV2 features.
 
-    Returns
-    -------
-    np.ndarray of shape (258,)
+    Input:
+        frames: (30, H, W, 3)
+
+    Output:
+        features: (30, 1280)
     """
-    results = holistic.process(frame)
 
-    # Pose landmarks (33 × 4)
-    if results.pose_landmarks:
-        pose = np.array([[lm.x, lm.y, lm.z, lm.visibility]
-                         for lm in results.pose_landmarks.landmark]).flatten()
-    else:
-        pose = np.zeros(NUM_POSE)
+    # CHANGED: Resize frames for MobileNetV2.
+    frames_resized = tf.image.resize(
+        frames,
+        IMAGE_SIZE
+    )
 
-    # Left hand landmarks (21 × 3)
-    if results.left_hand_landmarks:
-        lh = np.array([[lm.x, lm.y, lm.z]
-                        for lm in results.left_hand_landmarks.landmark]).flatten()
-    else:
-        lh = np.zeros(NUM_HAND)
+    # CHANGED: Convert to float32 and apply MobileNetV2 preprocessing.
+    frames_resized = tf.cast(
+        frames_resized,
+        tf.float32
+    )
 
-    # Right hand landmarks (21 × 3)
-    if results.right_hand_landmarks:
-        rh = np.array([[lm.x, lm.y, lm.z]
-                        for lm in results.right_hand_landmarks.landmark]).flatten()
-    else:
-        rh = np.zeros(NUM_HAND)
+    frames_preprocessed = preprocess_input(
+        frames_resized
+    )
 
-    return np.concatenate([pose, lh, rh])
+    # CHANGED: Extract 1280-dimensional feature vector for each frame.
+    features = mobilenet.predict(
+        frames_preprocessed,
+        batch_size=8,
+        verbose=0
+    )
+
+    return features.astype(np.float32)
 
 
-def extract_video_keypoints(frames: np.ndarray) -> np.ndarray:
+def extract_dataset_features(videos: list) -> np.ndarray:
     """
-    Process all frames of a single video and return the keypoint sequence.
+    Extract MobileNetV2 features from all videos.
 
-    Parameters
-    ----------
-    frames : np.ndarray of shape (T, H, W, 3) – RGB frames
-
-    Returns
-    -------
-    np.ndarray of shape (T, 258) – keypoints per frame
+    Output:
+        X shape = (number_of_videos, 30, 1280)
     """
-    keypoints_seq = []
-    with mp_holistic.Holistic(
-        static_image_mode=False,
-        model_complexity=1,
-        min_detection_confidence=0.5,
-        min_tracking_confidence=0.5
-    ) as holistic:
-        for frame in frames:
-            kp = extract_keypoints(frame, holistic)
-            keypoints_seq.append(kp)
-    return np.array(keypoints_seq)
+
+    all_features = []
+
+    total = len(videos)
+
+    for i, frames in enumerate(videos):
+        print(
+            f"  Extracting MobileNetV2 features "
+            f"{i + 1}/{total}"
+        )
+
+        features = extract_video_features(frames)
+
+        all_features.append(features)
+
+    return np.array(
+        all_features,
+        dtype=np.float32
+    )
 
 
 # ──────────────────────────────────────────────
-# Data Augmentation (critical for small datasets)
+# CHANGED: Feature-level augmentation
 # ──────────────────────────────────────────────
-def augment_keypoints(sequence: np.ndarray, num_augments: int = 5) -> list:
+def augment_feature_sequence(sequence: np.ndarray, num_augments: int = 5) -> list:
     """
-    Generate augmented versions of a keypoint sequence.
+    Create augmented copies of a MobileNetV2 feature sequence.
 
-    Augmentation strategies:
-    1. Gaussian noise injection
-    2. Time-shift (roll the sequence)
-    3. Scale jitter
-    4. Mirror left/right hands (swap hand columns)
-    5. Random frame dropout + interpolation
+    Input:
+        sequence: (30, 1280)
 
-    Parameters
-    ----------
-    sequence : np.ndarray of shape (T, 258)
-    num_augments : int – how many augmented copies to create
-
-    Returns
-    -------
-    list of np.ndarray, each of shape (T, 258)
+    Output:
+        list of augmented sequences.
     """
+
     augmented = []
 
-    for i in range(num_augments):
+    for _ in range(num_augments):
+
         aug = sequence.copy()
 
-        # 1) Gaussian noise (always applied, varying intensity)
-        noise_scale = np.random.uniform(0.002, 0.01)
-        aug = aug + np.random.normal(0, noise_scale, aug.shape)
+        # 1. Small Gaussian noise
+        noise_scale = np.random.uniform(
+            0.005,
+            0.02
+        )
 
-        # 2) Time shift – roll sequence by a few frames (50% chance)
-        if np.random.random() < 0.5:
-            shift = np.random.randint(-3, 4)
-            aug = np.roll(aug, shift, axis=0)
+        noise = np.random.normal(
+            0,
+            noise_scale,
+            aug.shape
+        ).astype(np.float32)
 
-        # 3) Scale jitter – slightly scale keypoints (50% chance)
+        aug = aug + noise
+
+        # 2. Temporal shift
         if np.random.random() < 0.5:
-            scale = np.random.uniform(0.95, 1.05)
+            shift = np.random.randint(-2, 3)
+            aug = np.roll(
+                aug,
+                shift,
+                axis=0
+            )
+
+        # 3. Feature scaling
+        if np.random.random() < 0.2:
+            scale = np.random.uniform(
+                0.95,
+                1.05
+            )
             aug = aug * scale
 
-        # 4) Mirror hands – swap left and right hand columns (30% chance)
-        if np.random.random() < 0.3:
-            pose_end = NUM_POSE
-            lh_end = NUM_POSE + NUM_HAND
-            rh_end = NUM_POSE + 2 * NUM_HAND
-            mirrored = aug.copy()
-            mirrored[:, pose_end:lh_end] = aug[:, lh_end:rh_end]
-            mirrored[:, lh_end:rh_end] = aug[:, pose_end:lh_end]
-            # Flip x-coordinates for mirrored hands (every 3rd element starting at 0)
-            for start in range(pose_end, rh_end, 3):
-                mirrored[:, start] = 1.0 - mirrored[:, start]
-            aug = mirrored
-
-        # 5) Random frame dropout – zero out 1-2 frames (30% chance)
-        if np.random.random() < 0.3:
+        # 4. Random frame dropout
+        if np.random.random() < 0.1:
             n_drop = np.random.randint(1, 3)
-            drop_indices = np.random.choice(len(aug), n_drop, replace=False)
-            aug[drop_indices] = 0.0
 
-        augmented.append(aug.astype(np.float32))
+            drop_indices = np.random.choice(
+                len(aug),
+                n_drop,
+                replace=False
+            )
+
+            # Replace dropped frames with neighbouring information
+            for idx in drop_indices:
+                if idx == 0:
+                    aug[idx] = aug[idx + 1]
+                elif idx == len(aug) - 1:
+                    aug[idx] = aug[idx - 1]
+                else:
+                    aug[idx] = (
+                        aug[idx - 1] +
+                        aug[idx + 1]
+                    ) / 2.0
+
+        augmented.append(
+            aug.astype(np.float32)
+        )
 
     return augmented
 
 
-def process_dataset(videos: list, labels: list, num_augments: int = 5):
+def augment_training_data(
+    X: np.ndarray,
+    y: np.ndarray,
+    num_augments: int = 5
+):
     """
-    Extract keypoints from all videos and augment.
+    Augment ONLY training videos.
 
-    Returns
-    -------
-    X : np.ndarray of shape (N, T, 258)
-    y : list[str] of length N
+    This is intentionally separate from validation data to
+    reduce data leakage.
     """
-    X_all = []
-    y_all = []
 
-    total = len(videos)
-    for i, (video_frames, label) in enumerate(zip(videos, labels)):
-        print(f"  Processing video {i+1}/{total} — class: {label}")
+    X_out = [x for x in X]
+    y_out = [y_i for y_i in y]
 
-        # Extract keypoints
-        kp_seq = extract_video_keypoints(video_frames)
+    for x, y_i in zip(X, y):
 
-        # Original sample
-        X_all.append(kp_seq.astype(np.float32))
-        y_all.append(label)
+        augmented_sequences = augment_feature_sequence(
+            x,
+            num_augments=num_augments
+        )
 
-        # Augmented samples
-        aug_seqs = augment_keypoints(kp_seq, num_augments=num_augments)
-        for aug in aug_seqs:
-            X_all.append(aug)
-            y_all.append(label)
+        for aug in augmented_sequences:
+            X_out.append(aug)
+            y_out.append(y_i)
 
-    X = np.array(X_all)
-
-    # Normalize: per-feature zero-mean unit-variance
-    mean = X.mean(axis=(0, 1), keepdims=True)
-    std = X.std(axis=(0, 1), keepdims=True) + 1e-8
-    X = (X - mean) / std
-
-    print(f"[INFO] Dataset shape after augmentation: {X.shape}")
-    return X, y_all, mean.squeeze(), std.squeeze()
+    return (
+        np.array(X_out, dtype=np.float32),
+        np.array(y_out, dtype=np.int32)
+    )

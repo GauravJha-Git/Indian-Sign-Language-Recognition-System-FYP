@@ -37,3 +37,6 @@ videos/
 temp/
 tmp/
 *.tmp
+
+out.txt
+test_results.txt
